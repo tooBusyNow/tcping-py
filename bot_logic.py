@@ -1,11 +1,11 @@
 import signal
-from socket import timeout
 from threading import Thread, current_thread
 from threading import Event
 from time import sleep
 import telebot
+from telebot.types import InlineKeyboardButton,\
+ InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 import tcping
-import pytest
 import sys
 import os
 
@@ -80,23 +80,23 @@ class WatchDog:
                             state = fh.read()
                             init_state[dst_ip] = state
                         if init_state[dst_ip] == "1":
-                            bot.send_message(
-                            bot_conf.chat_id, f'Host {dst_ip} is online already')
+                            bot.send_message(bot_conf.chat_id,
+                                             f'Host {dst_ip} is online')
                 else:
                     if os.path.isfile(f'{dst_ip}.txt'):
                         with open(f'{dst_ip}.txt', 'r') as fh:
                             state = fh.read()
                             hosts_state[dst_ip] = state
 
-                    if hosts_state[dst_ip] == "1" and init_state[dst_ip] == "0":
+                    if hosts_state[dst_ip] == "1" and \
+                            init_state[dst_ip] == "0":
+
                         bot.send_message(
                             bot_conf.chat_id, f'Host: {dst_ip} is online now')
 
             sleep(self.survey_time)
 
-
     def add_tcping_daemon(self, host, port) -> None:
-
         dst_ip = tcping.get_dst_ip(host)
         with open(f'{dst_ip}.txt', 'w') as fh:
             fh.write('0')
@@ -109,13 +109,11 @@ class WatchDog:
 
         thread.start()
 
-
     def remove_stat_files(self) -> None:
         for host in self.hosts:
             dst_ip = tcping.get_dst_ip(host)
             if os.path.isfile(f'{dst_ip}.txt'):
                 os.remove(f"{dst_ip}.txt")
-
 
     def stop_daemons(self) -> None:
         for daemon in self.TCPing_daemons:
@@ -146,6 +144,15 @@ bot = telebot.TeleBot(bot_conf.bot_token)
 watch_dog = WatchDog()
 
 
+def generate_inline_keys():
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton('Start WatchDog', callback_data='actWD'))
+    keyboard.add(InlineKeyboardButton('Start session', callback_data='test'))
+    keyboard.add(InlineKeyboardButton('Update', callback_data='upd'))
+    keyboard.add(InlineKeyboardButton('Help me!', callback_data='help'))
+    return keyboard
+
+
 def sigint_handler(signal, frame):
     print('Started graceful shutdown')
 
@@ -161,46 +168,72 @@ def sigint_handler(signal, frame):
 
 signal.signal(signal.SIGINT, sigint_handler)
 
+
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    markup.add(telebot.types.KeyboardButton('/auth'), telebot.types.KeyboardButton('/update'), telebot.types.KeyboardButton('some'))
-    markup.add(telebot.types.KeyboardButton('some'), telebot.types.KeyboardButton('some'), telebot.types.KeyboardButton('some'))
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    markup.add(KeyboardButton('/auth'), KeyboardButton('/update'),
+               KeyboardButton('/help'))
 
     bot.send_message(
         message.chat.id,
         'Hello there, I\'m tcping Telegram bot!\nPlease, authorize yourself ' +
         'first. \n\nIf you have your User Token as environmental variable ' +
-        '(TCPING_AUTH), you can easily do this with /auth command', reply_markup=markup)
+        '(TCPING_AUTH), you can easily do this with /auth command',
+        reply_markup=markup)
 
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
     if authorized:
-        keyboard = telebot.types.InlineKeyboardMarkup()
-        keyboard.add(
-            telebot.types.InlineKeyboardButton(
-                'WatchDog',
-                callback_data='actWD'))
-        keyboard.add(
-            telebot.types.InlineKeyboardButton(
-                'Test', callback_data='test'))
-
+        keyboard = generate_inline_keys()
         bot.send_message(
             message.chat.id,
-            'I have two commands.\n' +
-            'Test pings selected host on' +
-            'selected port (default dns.yandex, port 53)\n' +
-            'WatchDog starts thread which monitors' +
-            'selected host on selected port using TCPing\n\n'+
-            'Use this commands to change settings:\n'+
-            '/server $new_val\n'+
-            '/count $new_val\n'+
-            '/interval $new_val\n'+
-            '/port $new_val\n'+
+            'I have two commands.\n\n' +
+            '"Start session" or "/tcping" pings selected host on ' +
+            'selected port (default dns.yandex, port 53, 3 times)\n\n' +
+            '"Start WatchDog" or "/watchdog" starts thread which monitors ' +
+            'selected host on selected port using TCPing\n\n' +
+            'Use this commands to change settings:\n' +
+            '/server $new_val\n' +
+            '/count $new_val\n' +
+            '/interval $new_val\n' +
+            '/port $new_val\n' +
             '/update - Updates list of hosts for Watch Dog',
             reply_markup=keyboard
         )
+    else:
+        send_reject_msg(message)
+
+
+@bot.message_handler(commands='tcping')
+def start_tcping(message):
+    if authorized:
+        send_results(message)
+    else:
+        send_reject_msg(message)
+
+
+@bot.message_handler(commands='watchdog')
+def act_wd(message):
+    if authorized:
+        if watch_dog.wd_online:
+            bot.send_message(
+                message.chat.id,
+                'You have already started WatchDog.\n\n' +
+                'To add new observed host:\n' +
+                '/server $ip_of_new_host\n' +
+                '/port $port_of_desired_host\n' +
+                '/update')
+        else:
+            bot_conf.chat_id = message.chat.id
+
+            watch_dog.start_watcher()
+            watch_dog.add_tcping_daemon(bot_conf.host, bot_conf.port)
+            bot.send_message(
+                message.chat.id,
+                'Watch Dog was successfully started ' +
+                f'and now looking for {bot_conf.host}')
     else:
         send_reject_msg(message)
 
@@ -218,27 +251,12 @@ def quick_auth(message):
             authorized = True
             bot.send_message(message.chat.id, 'Successfully authorized!')
 
-            keyboard = telebot.types.InlineKeyboardMarkup()
-            keyboard.add(
-                telebot.types.InlineKeyboardButton(
-                    'WatchDog',
-                    callback_data='actWD'))
-            keyboard.add(
-                telebot.types.InlineKeyboardButton(
-                    'Test', callback_data='test'))
-            keyboard.add(
-                telebot.types.InlineKeyboardButton(
-                    'Help me!',
-                    callback_data='help'))
+            keyboard = generate_inline_keys()
 
             bot.send_message(
                 message.chat.id,
                 'Greetings, sir. How may I serve you?',
                 reply_markup=keyboard)
-            
-            new_keyboard = telebot.types.ReplyKeyboardMarkup(row_width=3)
-            new_keyboard.add(telebot.types.KeyboardButton('Update'),
-            telebot.types.KeyboardButton('Help me!'), telebot.types.KeyboardButton('WD button'))
 
         else:
             bot.send_message(
@@ -246,6 +264,7 @@ def quick_auth(message):
                 'Sorry, this doesn\'t look like authorization token.')
     else:
         bot.send_message(message.chat.id, 'Already authorized!')
+
 
 @bot.message_handler(commands=['server'])
 def set_host(message):
@@ -312,7 +331,7 @@ def set_interval(message):
 
 
 @bot.message_handler(commands=['update'])
-def set_interval(message):
+def update(message):
     if authorized:
         if bot_conf.host not in watch_dog.hosts:
             watch_dog.add_tcping_daemon(bot_conf.host, bot_conf.port)
@@ -325,28 +344,19 @@ def set_interval(message):
         send_reject_msg(message)
 
 
-@bot.message_handler(func=lambda message:True)
+@bot.message_handler(func=lambda message: True)
 def handle_noncommand(message):
     global authorized
     if message.text == bot_conf.usr_token:
         if authorized:
-            bot.send_message(message.chat.id, 'You have authorized already, enjoy your session!')
+            bot.send_message(
+                message.chat.id,
+                'You have authorized already, enjoy your session!')
         else:
             authorized = True
         bot.send_message(message.chat.id, 'Successfully authorized!')
 
-        keyboard = telebot.types.InlineKeyboardMarkup()
-        keyboard.add(
-            telebot.types.InlineKeyboardButton(
-                'WatchDog',
-                callback_data='actWD'))
-        keyboard.add(
-            telebot.types.InlineKeyboardButton(
-                'Test', callback_data='test'))
-        keyboard.add(
-            telebot.types.InlineKeyboardButton(
-                'Help me!',
-                callback_data='help'))
+        keyboard = generate_inline_keys()
 
         bot.send_message(
             message.chat.id,
@@ -355,7 +365,8 @@ def handle_noncommand(message):
     else:
         bot.send_message(
             message.chat.id,
-            'Sorry, this doesn\'t look like authorization token. And I don\'t understand plain text or emoji :(')
+            'Sorry, this doesn\'t look like authorization token.\n' +
+            'And I don\'t understand plain text or emoji :(')
 
 
 def test(query):
@@ -390,19 +401,14 @@ def send_results(message):
 def start_watch_dog(query):
     if authorized:
         if watch_dog.wd_online:
-            if bot_conf.host not in watch_dog.hosts:
-
-                bot.answer_callback_query(query.id)
-                watch_dog.add_tcping_daemon(bot_conf.host, bot_conf.port)
-
-                bot.send_message(
-                    query.message.chat.id,
-                    f'Watch Dog is now looking for {bot_conf.host}')
-            else:
-                bot.answer_callback_query(query.id)
-                bot.send_message(
-                    query.message.chat.id,
-                    'You have already added this host to Watch Dog')
+            bot.answer_callback_query(query.id)
+            bot.send_message(
+                query.message.chat.id,
+                'You have already started WatchDog.\n\n' +
+                'To add new observed host:\n' +
+                '/server $ip_of_new_host\n' +
+                '/port $port_of_desired_host\n' +
+                '/update')
         else:
             bot_conf.chat_id = query.message.chat.id
 
@@ -412,7 +418,6 @@ def start_watch_dog(query):
                 query.message.chat.id,
                 'Watch Dog was successfully started ' +
                 f'and now looking for {bot_conf.host}')
-
     else:
         send_reject_query(query)
 
@@ -426,6 +431,8 @@ def iq_callback(query):
         start_watch_dog(query)
     elif data == 'help':
         help_command(query.message)
+    elif data == 'upd':
+        update(query.message)
 
 
 def send_reject_query(query):
@@ -449,5 +456,3 @@ def validate_and_get(message):
 
 if __name__ == '__main__':
     bot.polling(none_stop=True)
-
-# Ignore pytest
