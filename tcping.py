@@ -12,9 +12,9 @@ import sys
 import platform
 from texttable import Texttable
 
-# if platform.system() != 'Linux':
-#     print('TCPing is only available on *nix-based systems')
-#     sys.exit(1)
+if platform.system() != 'Linux':
+    print('TCPing is only available on *nix-based systems')
+    sys.exit(1)
 
 
 class Stat:
@@ -33,7 +33,7 @@ class Stat:
         self.recv = 0
 
     def get_avg_time(self) -> int:
-        if self.recv is 0:
+        if self.recv == 0:
             return -1
         return round(sum(self.time_deltas) / self.recv)
 
@@ -100,7 +100,8 @@ def new_socket(timeout):
     try:
         soc = socket.socket(
             socket.AF_INET,
-            socket.SOCK_RAW)
+            socket.SOCK_RAW,
+            socket.IPPROTO_TCP)
         soc.settimeout(timeout)
     except socket.error as err:
         print('Unable to create raw socket due to error: ', err)
@@ -123,13 +124,16 @@ def get_response(
     print(f"new attempt {dst_ip}")
 
     init_time = time.time()
+   
     soc.sendto(syn_packet, (dst_ip, port))
+    print('Send to', (dst_ip, port))
+
     stat.send += 1
     try:
-        res = soc.recv(1024)
-        soc.sendto(rst_packet, (dst_ip, port))
-
-        print(struct.unpack('!HHIIBBH', res[20:36]))
+        res = soc.recv(16384)
+        # soc.sendto(rst_packet, (dst_ip, port))
+        
+        print(struct.unpack('!BB', res[20:22]))
         ack_num = struct.unpack('!HHIIBBH', res[20:36])[3]
         if seq_num + 1 == ack_num:
 
@@ -146,6 +150,8 @@ def get_response(
                 f' : seq = {seq_num}, time = {delta}ms')
             stat.recv += 1
             stat.add_delta(delta)
+        else:
+            print('This case')
     except socket.timeout:
         if wd_mode:
                 print(f"Timeout {dst_ip}")
@@ -265,6 +271,8 @@ def start_tcping_session(host, port, count, timeout, interval, wd_mode):
             break
 
         src_port = get_avail_port()
+
+        soc.setsockopt(socket.SOL_SOCKET, 25, str("eth0" + '\0').encode('utf-8'))
 
         seq_num = random.randint(0, 1234567)
 

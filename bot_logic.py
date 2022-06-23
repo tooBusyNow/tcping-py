@@ -206,7 +206,7 @@ def help_command(message):
         send_reject_msg(message)
 
 
-@bot.message_handler(commands='tcping')
+@bot.message_handler(commands=['tcping'])
 def start_tcping(message):
     if authorized:
         send_results(message)
@@ -214,7 +214,7 @@ def start_tcping(message):
         send_reject_msg(message)
 
 
-@bot.message_handler(commands='watchdog')
+@bot.message_handler(commands=['watchdog'])
 def act_wd(message):
     if authorized:
         if watch_dog.wd_online:
