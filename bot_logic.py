@@ -5,8 +5,10 @@ from threading import Event
 from time import sleep
 import telebot
 import tcping
-import os
+import pytest
 import sys
+import os
+
 from subprocess import Popen, PIPE, STDOUT
 
 """         ┌────────────────────────────┐
@@ -92,6 +94,7 @@ class WatchDog:
 
             sleep(self.survey_time)
 
+
     def add_tcping_daemon(self, host, port) -> None:
 
         dst_ip = tcping.get_dst_ip(host)
@@ -106,11 +109,13 @@ class WatchDog:
 
         thread.start()
 
+
     def remove_stat_files(self) -> None:
         for host in self.hosts:
             dst_ip = tcping.get_dst_ip(host)
             if os.path.isfile(f'{dst_ip}.txt'):
                 os.remove(f"{dst_ip}.txt")
+
 
     def stop_daemons(self) -> None:
         for daemon in self.TCPing_daemons:
@@ -156,14 +161,17 @@ def sigint_handler(signal, frame):
 
 signal.signal(signal.SIGINT, sigint_handler)
 
-
 @bot.message_handler(commands=['start'])
 def start_command(message):
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    markup.add(telebot.types.KeyboardButton('/auth'), telebot.types.KeyboardButton('/update'), telebot.types.KeyboardButton('some'))
+    markup.add(telebot.types.KeyboardButton('some'), telebot.types.KeyboardButton('some'), telebot.types.KeyboardButton('some'))
+
     bot.send_message(
         message.chat.id,
         'Hello there, I\'m tcping Telegram bot!\nPlease, authorize yourself ' +
         'first. \n\nIf you have your User Token as environmental variable ' +
-        '(TCPING_AUTH), you can easily do this with /auth command')
+        '(TCPING_AUTH), you can easily do this with /auth command', reply_markup=markup)
 
 
 @bot.message_handler(commands=['help'])
@@ -199,39 +207,45 @@ def help_command(message):
 
 @bot.message_handler(commands=['auth'])
 def quick_auth(message):
-    auth_token = os.environ.get('TCPING_AUTH')
-    if auth_token is None:
-        bot.send_message(
-            message.chat.id,
-            'Sorry, but you don\'t have token as env. variable')
-    elif auth_token == bot_conf.usr_token:
-        global authorized
-        authorized = True
-        bot.send_message(message.chat.id, 'Successfully authorized!')
+    global authorized
+    if not authorized:
+        auth_token = os.environ.get('TCPING_AUTH')
+        if auth_token is None:
+            bot.send_message(
+                message.chat.id,
+                'Sorry, but you don\'t have token as env. variable')
+        elif auth_token == bot_conf.usr_token:
+            authorized = True
+            bot.send_message(message.chat.id, 'Successfully authorized!')
 
-        keyboard = telebot.types.InlineKeyboardMarkup()
-        keyboard.add(
-            telebot.types.InlineKeyboardButton(
-                'WatchDog',
-                callback_data='actWD'))
-        keyboard.add(
-            telebot.types.InlineKeyboardButton(
-                'Test', callback_data='test'))
-        keyboard.add(
-            telebot.types.InlineKeyboardButton(
-                'Help me!',
-                callback_data='help'))
+            keyboard = telebot.types.InlineKeyboardMarkup()
+            keyboard.add(
+                telebot.types.InlineKeyboardButton(
+                    'WatchDog',
+                    callback_data='actWD'))
+            keyboard.add(
+                telebot.types.InlineKeyboardButton(
+                    'Test', callback_data='test'))
+            keyboard.add(
+                telebot.types.InlineKeyboardButton(
+                    'Help me!',
+                    callback_data='help'))
 
-        bot.send_message(
-            message.chat.id,
-            'Greetings, sir. How may I serve you?',
-            reply_markup=keyboard)
+            bot.send_message(
+                message.chat.id,
+                'Greetings, sir. How may I serve you?',
+                reply_markup=keyboard)
+            
+            new_keyboard = telebot.types.ReplyKeyboardMarkup(row_width=3)
+            new_keyboard.add(telebot.types.KeyboardButton('Update'),
+            telebot.types.KeyboardButton('Help me!'), telebot.types.KeyboardButton('WD button'))
 
+        else:
+            bot.send_message(
+                message.chat.id,
+                'Sorry, this doesn\'t look like authorization token.')
     else:
-        bot.send_message(
-            message.chat.id,
-            'Sorry, this doesn\'t look like authorization token.')
-
+        bot.send_message(message.chat.id, 'Already authorized!')
 
 @bot.message_handler(commands=['server'])
 def set_host(message):
@@ -309,6 +323,39 @@ def set_interval(message):
                              'You have already added this host to Watch Dog')
     else:
         send_reject_msg(message)
+
+
+@bot.message_handler(func=lambda message:True)
+def handle_noncommand(message):
+    global authorized
+    if message.text == bot_conf.usr_token:
+        if authorized:
+            bot.send_message(message.chat.id, 'You have authorized already, enjoy your session!')
+        else:
+            authorized = True
+        bot.send_message(message.chat.id, 'Successfully authorized!')
+
+        keyboard = telebot.types.InlineKeyboardMarkup()
+        keyboard.add(
+            telebot.types.InlineKeyboardButton(
+                'WatchDog',
+                callback_data='actWD'))
+        keyboard.add(
+            telebot.types.InlineKeyboardButton(
+                'Test', callback_data='test'))
+        keyboard.add(
+            telebot.types.InlineKeyboardButton(
+                'Help me!',
+                callback_data='help'))
+
+        bot.send_message(
+            message.chat.id,
+            'Greetings, sir. How may I serve you?',
+            reply_markup=keyboard)
+    else:
+        bot.send_message(
+            message.chat.id,
+            'Sorry, this doesn\'t look like authorization token. And I don\'t understand plain text or emoji :(')
 
 
 def test(query):
