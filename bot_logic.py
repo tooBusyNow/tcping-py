@@ -395,6 +395,7 @@ def send_results(message):
         bot_conf.interval,
         False)
     sys.stdout.close()
+    
 
     sys.stdout = init_stdout
 
