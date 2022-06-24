@@ -1,0 +1,3 @@
+[run]
+omit =
+    bot_logic.py
