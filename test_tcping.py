@@ -42,7 +42,10 @@ class TestTCPing(unittest.TestCase):
 
         seq_num = 420
 
-        expected = b'\xc0\x03\x00P\x00\x00\x01\xa4\x00\x00\x00\x00P\x02\x08\x00B\xe7\x00\x00'
+        exp_p1 = b'\xc0\x03\x00P\x00\x00\x01\xa4\x00\x00'
+        exp_p2 = b'\x00\x00P\x02\x08\x00B\xe7\x00\x00'
+
+        expected = exp_p1 + exp_p2
         real = tcping.form_packet(
             src_ip, src_port, dst_ip, dst_port, seq_num, 2)
 
@@ -71,10 +74,11 @@ class TestTCPing(unittest.TestCase):
 
     def test_get_checksum(self):
         pshdr = b'\xac\x1d\xd2\xac\xb2\xf8\xe9!\x00\x06\x00\x14'
-        tcp_header = b'\xc0\x03\x00P\x00\x00\x01\xa4\x00\x00\x00\x00P\x02\x08\x00'
+
+        tcp_hdr = b'\xc0\x03\x00P\x00\x00\x01\xa4\x00\x00\x00\x00P\x02\x08\x00'
 
         expected = 1739
-        real = tcping.get_checksum(pshdr + tcp_header)
+        real = tcping.get_checksum(pshdr + tcp_hdr)
         self.assertEqual(expected, real)
 
     def test_start_tcp_session(self):

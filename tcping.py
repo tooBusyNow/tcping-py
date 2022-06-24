@@ -125,35 +125,36 @@ def get_response(
     """
 
     init_time = time.time()
-   
+
     soc.sendto(syn_packet, (dst_ip, port))
-    stat.send += 1
-    
+    if not wd_mode:
+        stat.send += 1
+
     while True:
         listFdAndEvent = poll.poll(soc.gettimeout() * 1000)
         if not listFdAndEvent:
             if wd_mode:
-                print(f"Timeout {dst_ip}")
                 with open(f'{dst_ip}.txt', 'w') as fh:
-                    fh.write("0")
+                    fh.write('0')
                 return
-            print(f'Unable to get a response from target host: {dst_ip}:[{port}]')
+            print('Unable to get a response from ' +
+                  f'target host: {dst_ip}:[{port}]')
             return
-        
+
         got_fd = listFdAndEvent[0][0]
+
         if got_fd == soc.fileno():
             data = soc.recv(2048)
 
             res = struct.unpack('!BBBBIIBB', data[20:34])
 
             ack_num = res[5]
-            ack_flag =  res[7] == 18
+            ack_flag = res[7] == 18
 
             if seq_num + 1 == ack_num and ack_flag:
                 delta = round((time.time() - init_time) * 1000)
 
                 if wd_mode:
-                    print(f"Get response {dst_ip}")
                     with open(f'{dst_ip}.txt', 'w') as fh:
                         fh.write("1")
                     return
@@ -161,9 +162,11 @@ def get_response(
                 print(
                     f'OK! Got response from {dst_ip}:[{port}]' +
                     f' : seq = {seq_num}, time = {delta}ms')
+
                 stat.recv += 1
                 stat.add_delta(delta)
                 return
+
 
 def get_dst_ip(host):
     """
@@ -285,7 +288,7 @@ def start_tcping_session(host, port, count, timeout, interval, wd_mode):
             port,
             seq_num,
             stat,
-            wd_mode, 
+            wd_mode,
             poll)
         sleep(interval)
 

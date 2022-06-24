@@ -19,7 +19,7 @@ Usage:
         $sudo python3 test_tcping.py
     
     Test run with coverage (~80%):
-        $sudo python3 -m pytest --tb=line --cov=tcping test_tcping.py
+        $sudo python3 -m pytest --tb=line --cov=.
 
 Structure:
 	tcping.py - TCPing script itself
@@ -27,8 +27,6 @@ Structure:
 
 	bot_logic.py - main script for Telegram Bot and Watch Dog
 
-
-Still in progress:
 
             ┌────────────────────────────┐
             │ Watch Dog workflow scheme  │

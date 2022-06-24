@@ -4,10 +4,11 @@ from threading import Event
 from time import sleep
 import telebot
 from telebot.types import InlineKeyboardButton,\
- InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+    InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 import tcping
 import sys
 import os
+import re
 
 from subprocess import Popen, PIPE, STDOUT
 
@@ -55,7 +56,7 @@ class WatchDog:
         self.WDaemon = None
 
         self.tcping_timeout = 1
-        self.tcping_interval = 3
+        self.tcping_interval = 1
 
     def start_watcher(self) -> None:
         self.wd_online = True
@@ -67,8 +68,8 @@ class WatchDog:
             self.WDaemon.stop()
 
     def watcher(self, hosts) -> None:
-        hosts_state = {}
-        init_state = {}
+        cur_state = {}
+        prev_state = {}
         while (True):
             if current_thread().stopped():
                 print('Watcher was stopped')
@@ -77,26 +78,31 @@ class WatchDog:
             for host in hosts:
                 dst_ip = tcping.get_dst_ip(host)
 
-                if init_state.get(dst_ip) is None:
-                    if os.path.isfile(f'{dst_ip}.txt'):
-                        with open(f'{dst_ip}.txt', 'r') as fh:
-                            state = fh.read()
-                            init_state[dst_ip] = state
-                        if init_state[dst_ip] == "1":
-                            bot.send_message(bot_conf.chat_id,
-                                             f'Host {dst_ip} is online already')
+                if prev_state.get(dst_ip) is None:
+                    with open(f'{dst_ip}.txt', 'r') as fh:
+                        state = fh.read()
+                        prev_state[dst_ip] = state
+                    if prev_state[dst_ip] == "1":
+                        msg = f'Host {dst_ip} is online already'
+                        bot.send_message(bot_conf.chat_id, msg)
+
                 else:
+
                     if os.path.isfile(f'{dst_ip}.txt'):
                         with open(f'{dst_ip}.txt', 'r') as fh:
                             state = fh.read()
-                            hosts_state[dst_ip] = state
+                            cur_state[dst_ip] = state
 
-                    if hosts_state[dst_ip] == "1" and \
-                            init_state[dst_ip] == "0":
-
+                    if cur_state[dst_ip] == "1" and prev_state[dst_ip] == "0":
+                        prev_state[dst_ip] = '1'
                         bot.send_message(
                             bot_conf.chat_id, f'Host: {dst_ip} is online now')
 
+                    elif prev_state[dst_ip] == "1" and \
+                            cur_state[dst_ip] == '0':
+                        prev_state[dst_ip] = '0'
+                        bot.send_message(
+                            bot_conf.chat_id, f'Host: {dst_ip} is offline now')
             sleep(self.survey_time)
 
     def add_tcping_daemon(self, host, port) -> None:
@@ -110,16 +116,16 @@ class WatchDog:
 
         thread = StoppableThread(
             target=tcping.start_tcping_session,
-            args=(host, port, sys.maxsize, interval, timeout, True))
+            args=(host, port, sys.maxsize, timeout, interval, True))
         self.TCPing_daemons.append(thread)
 
         thread.start()
 
     def remove_stat_files(self) -> None:
-        for host in self.hosts:
-            dst_ip = tcping.get_dst_ip(host)
-            if os.path.isfile(f'{dst_ip}.txt'):
-                os.remove(f"{dst_ip}.txt")
+        files = os.listdir('.')
+        for file in files:
+            if re.search(r'\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}', file):
+                os.remove(file)
 
     def stop_daemons(self) -> None:
         for daemon in self.TCPing_daemons:
@@ -131,7 +137,7 @@ class BotConfig:
         self.bot_token = '5372606727:AAE_2d8Rv2AGlLj0rmXg65VHIyqrzmS_Wuo'
         self.usr_token = 'gp1uAlBWl-q5wtBd7wqoHfhiUBsUsub1R86jm63ASUg'
 
-        self.host = 'vk.com'
+        self.host = 'habr.ru'
         self.port = 80
         self.count = 3
 
@@ -145,6 +151,7 @@ reject_msg = 'I can\'t recognize you. You\'re not my master!'
 
 bot_conf = BotConfig()
 authorized = False
+watch_dog_started = False
 
 bot = telebot.TeleBot(bot_conf.bot_token)
 watch_dog = WatchDog()
@@ -153,7 +160,10 @@ watch_dog = WatchDog()
 def generate_inline_keys():
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton('Start WatchDog', callback_data='actWD'))
-    keyboard.add(InlineKeyboardButton('Start session', callback_data='test'))
+    keyboard.add(
+        InlineKeyboardButton(
+            'Start session',
+            callback_data='startSession'))
     keyboard.add(InlineKeyboardButton('Update', callback_data='upd'))
     keyboard.add(InlineKeyboardButton('Help me!', callback_data='help'))
     return keyboard
@@ -162,11 +172,11 @@ def generate_inline_keys():
 def sigint_handler(signal, frame):
     print('Started graceful shutdown')
 
-    watch_dog.stop_watcher()
     watch_dog.stop_daemons()
-    watch_dog.remove_stat_files()
+    sleep(watch_dog.tcping_interval + watch_dog.tcping_timeout)
 
-    sleep(5)
+    watch_dog.remove_stat_files()
+    watch_dog.stop_watcher()
 
     print('Done!')
     sys.exit(0)
@@ -179,7 +189,8 @@ signal.signal(signal.SIGINT, sigint_handler)
 def start_command(message):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     markup.add(KeyboardButton('/auth'), KeyboardButton('/update'),
-               KeyboardButton('/help'))
+               KeyboardButton('/help'), KeyboardButton('/tcping'),
+               KeyboardButton('/watchdog'))
 
     bot.send_message(
         message.chat.id,
@@ -197,7 +208,7 @@ def help_command(message):
             message.chat.id,
             'I have two commands.\n\n' +
             '"Start session" or "/tcping" pings selected host on ' +
-            'selected port (default dns.yandex, port 53, 3 times)\n\n' +
+            'selected port (default habr.ru, port 80, 3 times)\n\n' +
             '"Start WatchDog" or "/watchdog" starts thread which monitors ' +
             'selected host on selected port using TCPing\n\n' +
             'Use this commands to change settings:\n' +
@@ -222,7 +233,9 @@ def start_tcping(message):
 
 @bot.message_handler(commands=['watchdog'])
 def act_wd(message):
+    global watch_dog_started
     if authorized:
+        watch_dog_started = True
         if watch_dog.wd_online:
             bot.send_message(
                 message.chat.id,
@@ -338,14 +351,21 @@ def set_interval(message):
 
 @bot.message_handler(commands=['update'])
 def update(message):
+    global watch_dog_started
     if authorized:
-        if bot_conf.host not in watch_dog.hosts:
-            watch_dog.add_tcping_daemon(bot_conf.host, bot_conf.port)
+        if not watch_dog_started:
             bot.send_message(message.chat.id,
-                             f'Watch Dog is now looking for {bot_conf.host}')
+                             'You have to start Watch Dog before using Update')
         else:
-            bot.send_message(message.chat.id,
-                             'You have already added this host to Watch Dog')
+            if bot_conf.host not in watch_dog.hosts:
+                watch_dog.add_tcping_daemon(bot_conf.host, bot_conf.port)
+                bot.send_message(
+                    message.chat.id,
+                    f'Watch Dog is now looking for {bot_conf.host}')
+            else:
+                bot.send_message(
+                    message.chat.id,
+                    'You have already added this host to Watch Dog')
     else:
         send_reject_msg(message)
 
@@ -375,7 +395,7 @@ def handle_noncommand(message):
             'And I don\'t understand plain text or emoji :(')
 
 
-def test(query):
+def start_session(query):
     if authorized:
         bot.answer_callback_query(query.id)
         send_results(query.message)
@@ -395,7 +415,6 @@ def send_results(message):
         bot_conf.interval,
         False)
     sys.stdout.close()
-    
 
     sys.stdout = init_stdout
 
@@ -406,7 +425,9 @@ def send_results(message):
 
 
 def start_watch_dog(query):
+    global watch_dog_started
     if authorized:
+        watch_dog_started = True
         if watch_dog.wd_online:
             bot.answer_callback_query(query.id)
             bot.send_message(
@@ -421,6 +442,7 @@ def start_watch_dog(query):
 
             watch_dog.start_watcher()
             watch_dog.add_tcping_daemon(bot_conf.host, bot_conf.port)
+
             bot.send_message(
                 query.message.chat.id,
                 'Watch Dog was successfully started ' +
@@ -432,8 +454,8 @@ def start_watch_dog(query):
 @bot.callback_query_handler(func=lambda call: True)
 def iq_callback(query):
     data = query.data
-    if data == 'test':
-        test(query)
+    if data == 'startSession':
+        start_session(query)
     elif data == 'actWD':
         start_watch_dog(query)
     elif data == 'help':
