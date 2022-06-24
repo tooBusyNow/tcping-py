@@ -10,7 +10,9 @@ from time import sleep
 import signal
 import sys
 import platform
+import select
 from texttable import Texttable
+
 
 if platform.system() != 'Linux':
     print('TCPing is only available on *nix-based systems')
@@ -112,57 +114,56 @@ def new_socket(timeout):
 def get_response(
         soc,
         syn_packet,
-        rst_packet,
         dst_ip,
         port,
         seq_num,
         stat,
-        wd_mode):
+        wd_mode,
+        poll):
     """
     Tries to get a SYN-ACK response to our SYN packet.
     """
-    print(f"new attempt {dst_ip}")
 
     init_time = time.time()
    
     soc.sendto(syn_packet, (dst_ip, port))
-    print('Send to', (dst_ip, port))
-
     stat.send += 1
-    try:
-        res = soc.recv(16384)
-        # soc.sendto(rst_packet, (dst_ip, port))
-        
-        print(struct.unpack('!BB', res[20:22]))
-        ack_num = struct.unpack('!HHIIBBH', res[20:36])[3]
-        if seq_num + 1 == ack_num:
-
-            delta = round((time.time() - init_time) * 1000)
-
+    
+    while True:
+        listFdAndEvent = poll.poll(soc.gettimeout() * 1000)
+        if not listFdAndEvent:
             if wd_mode:
-                print(f"Get response {dst_ip}")
-                with open(f'{dst_ip}.txt', 'w') as fh:
-                    fh.write("1")
-                return
-
-            print(
-                f'OK! Got response from {dst_ip}:[{port}]' +
-                f' : seq = {seq_num}, time = {delta}ms')
-            stat.recv += 1
-            stat.add_delta(delta)
-        else:
-            print('This case')
-    except socket.timeout:
-        if wd_mode:
                 print(f"Timeout {dst_ip}")
                 with open(f'{dst_ip}.txt', 'w') as fh:
                     fh.write("0")
                 return
-        print(f'Unable to get a response from target host: {dst_ip}:[{port}]')
+            print(f'Unable to get a response from target host: {dst_ip}:[{port}]')
+            return
         
-    except Exception as ex:
-        print(f'Something went wrong during reading from socket: {ex}')
+        got_fd = listFdAndEvent[0][0]
+        if got_fd == soc.fileno():
+            data = soc.recv(2048)
 
+            res = struct.unpack('!BBBBIIBB', data[20:34])
+
+            ack_num = res[5]
+            ack_flag =  res[7] == 18
+
+            if seq_num + 1 == ack_num and ack_flag:
+                delta = round((time.time() - init_time) * 1000)
+
+                if wd_mode:
+                    print(f"Get response {dst_ip}")
+                    with open(f'{dst_ip}.txt', 'w') as fh:
+                        fh.write("1")
+                    return
+
+                print(
+                    f'OK! Got response from {dst_ip}:[{port}]' +
+                    f' : seq = {seq_num}, time = {delta}ms')
+                stat.recv += 1
+                stat.add_delta(delta)
+                return
 
 def get_dst_ip(host):
     """
@@ -188,16 +189,14 @@ def get_src_ip():
     return src_ip
 
 
-def get_avail_port():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+def get_avail_port(soc):
     while (True):
         port = random.randint(49152, 65535)
         try:
-            s.bind(('0.0.0.0', port))
+            soc.bind(('0.0.0.0', port))
         except socket.error:
             continue
         else:
-            s.close()
             return port
 
 
@@ -262,32 +261,32 @@ def start_tcping_session(host, port, count, timeout, interval, wd_mode):
 
     soc = new_socket(timeout)
 
+    poll = select.poll()
+    poll.register(soc, select.POLLIN)
+
     src_ip = get_src_ip()
     dst_ip = get_dst_ip(host)
+
+    src_port = get_avail_port(soc)
 
     for _ in range(0, count):
         if wd_mode and current_thread().stopped():
             print(f'Stopped daemon responsible for {host}')
             break
 
-        src_port = get_avail_port()
-
-        soc.setsockopt(socket.SOL_SOCKET, 25, str("eth0" + '\0').encode('utf-8'))
-
         seq_num = random.randint(0, 1234567)
 
         syn_packet = form_packet(src_ip, src_port, dst_ip, port, seq_num, 2)
-        rst_packet = form_packet(src_ip, src_port, dst_ip, port, seq_num, 4)
 
         get_response(
             soc,
             syn_packet,
-            rst_packet,
             dst_ip,
             port,
             seq_num,
             stat,
-            wd_mode)
+            wd_mode, 
+            poll)
         sleep(interval)
 
     soc.close()

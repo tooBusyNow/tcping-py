@@ -54,6 +54,9 @@ class WatchDog:
         self.TCPing_daemons = []
         self.WDaemon = None
 
+        self.tcping_timeout = 1
+        self.tcping_interval = 3
+
     def start_watcher(self) -> None:
         self.wd_online = True
         self.WDaemon = StoppableThread(target=self.watcher, args=(self.hosts,))
@@ -81,7 +84,7 @@ class WatchDog:
                             init_state[dst_ip] = state
                         if init_state[dst_ip] == "1":
                             bot.send_message(bot_conf.chat_id,
-                                             f'Host {dst_ip} is online')
+                                             f'Host {dst_ip} is online already')
                 else:
                     if os.path.isfile(f'{dst_ip}.txt'):
                         with open(f'{dst_ip}.txt', 'r') as fh:
@@ -102,9 +105,12 @@ class WatchDog:
             fh.write('0')
 
         self.hosts.append(bot_conf.host)
+        interval = self.tcping_interval
+        timeout = self.tcping_timeout
+
         thread = StoppableThread(
             target=tcping.start_tcping_session,
-            args=(host, port, sys.maxsize, 0.5, 5, True))
+            args=(host, port, sys.maxsize, interval, timeout, True))
         self.TCPing_daemons.append(thread)
 
         thread.start()
