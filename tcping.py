@@ -12,12 +12,14 @@ import sys
 import platform
 import select
 from texttable import Texttable
+from scapy.all import IP, TCP, srloop, SndRcvList, sr1, sr
 
+
+LINUX_FLAG = True
+WD_MODE = False
 
 if platform.system() != 'Linux':
-    print('TCPing is only available on *nix-based systems')
-    sys.exit(1)
-
+    LINUX_FLAG = False
 
 class Stat:
     """
@@ -72,7 +74,6 @@ class Stat:
 
 
 stat = Stat()
-wd_mode = False
 
 
 def sigint_handler(signal, frame):
@@ -118,7 +119,7 @@ def get_response(
         port,
         seq_num,
         stat,
-        wd_mode,
+        WD_MODE,
         poll):
     """
     Tries to get a SYN-ACK response to our SYN packet.
@@ -127,13 +128,13 @@ def get_response(
     init_time = time.time()
 
     soc.sendto(syn_packet, (dst_ip, port))
-    if not wd_mode:
+    if not WD_MODE:
         stat.send += 1
 
     while True:
         listFdAndEvent = poll.poll(soc.gettimeout() * 1000)
         if not listFdAndEvent:
-            if wd_mode:
+            if WD_MODE:
                 with open(f'{dst_ip}.txt', 'w') as fh:
                     fh.write('0')
                 return
@@ -154,7 +155,7 @@ def get_response(
             if seq_num + 1 == ack_num and ack_flag:
                 delta = round((time.time() - init_time) * 1000)
 
-                if wd_mode:
+                if WD_MODE:
                     with open(f'{dst_ip}.txt', 'w') as fh:
                         fh.write("1")
                     return
@@ -250,11 +251,12 @@ def form_packet(src_ip, src_port, dst_ip, dst_port, seq_num, flag):
     return syn_packet
 
 
-def start_tcping_session(host, port, count, timeout, interval, wd_mode):
+def start_tcping_session(host, port, count, timeout, interval, WD_MODE):
     """
     Initiates new tcping session, in which we will be sending
     TCP SYN packets and trying to recieve TCP ACK.
     """
+
     global stat
     stat = Stat()
 
@@ -262,38 +264,65 @@ def start_tcping_session(host, port, count, timeout, interval, wd_mode):
         is_positive_num(arg)
     validate_port(port)
 
-    soc = new_socket(timeout)
-
-    poll = select.poll()
-    poll.register(soc, select.POLLIN)
-
     src_ip = get_src_ip()
     dst_ip = get_dst_ip(host)
 
-    src_port = get_avail_port(soc)
+    if LINUX_FLAG:
 
-    for _ in range(0, count):
-        if wd_mode and current_thread().stopped():
-            print(f'Stopped daemon responsible for {host}')
-            break
+        soc = new_socket(timeout)
 
-        seq_num = random.randint(0, 1234567)
+        poll = select.poll()
+        poll.register(soc, select.POLLIN)
 
-        syn_packet = form_packet(src_ip, src_port, dst_ip, port, seq_num, 2)
+        src_port = get_avail_port(soc)
 
-        get_response(
-            soc,
-            syn_packet,
-            dst_ip,
-            port,
-            seq_num,
-            stat,
-            wd_mode,
-            poll)
-        sleep(interval)
+        for _ in range(0, count):
+            if WD_MODE and current_thread().stopped():
+                print(f'Stopped daemon responsible for {host}')
+                break
 
-    soc.close()
-    if not wd_mode:
+            seq_num = random.randint(0, 1234567)
+            syn_packet = form_packet(src_ip, src_port, dst_ip, port, seq_num, 2)
+
+            get_response(
+                soc,
+                syn_packet,
+                dst_ip,
+                port,
+                seq_num,
+                stat,
+                WD_MODE,
+                poll)
+            sleep(interval)
+
+        soc.close()
+
+    else:
+        ip=IP(dst=dst_ip)
+        src_port = get_avail_port(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+        
+        for _ in range(count):
+
+            seq_num = random.randint(0, 1234567)
+            SYN=TCP(sport=src_port, dport=port, flags='S', seq=seq_num)
+            
+            init_time = time.time()
+
+            stat.send += 1
+            ans, _ = srloop(ip/SYN, timeout=timeout, inter=interval, verbose=False, count=1)
+
+            if not ans:
+                print('Unable to get a response from ' +
+                  f'target host: {dst_ip}:[{port}]')
+            else:
+               stat.recv +=1
+               delta = round((time.time() - init_time) * 1000)
+               stat.add_delta(delta)
+               print(
+                    f'OK! Got response from {dst_ip}:[{port}]' +
+                    f' : seq = {seq_num}, time = {delta}ms')
+
+    if not WD_MODE:
         stat.print()
 
 
@@ -323,7 +352,7 @@ def parse_args(args):
         default=sys.maxsize,
         help='Number of connections counts (default = infinity)')
     parser.add_argument('-i', '--interval', type=float,
-                        default=0.5, help='Interval between connections')
+                        default=1, help='Interval between connections')
 
     return parser.parse_args(args)
 
@@ -334,7 +363,7 @@ def main(host, port, count, timeout, interval):
     recieving ACK TCP packet from other side.
     So, it doesn't need to establish TCP connection for pinging.
     """
-    start_tcping_session(host, port, count, timeout, interval, wd_mode)
+    start_tcping_session(host, port, count, timeout, interval, WD_MODE)
 
 
 if __name__ == '__main__':

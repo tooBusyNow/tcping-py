@@ -115,6 +115,13 @@ class TestTCPing(unittest.TestCase):
 
         self.assertEqual(exp_lines, real_lines)
 
+    def test_src_ip(self):
+        soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        soc.connect(('1.1.1.1', 53))
+        expected = soc.getsockname()[0]
+        soc.close()
+        real = tcping.get_src_ip()
+        self.assertEqual(expected, real)
 
 if __name__ == "__main__":
     unittest.main()
