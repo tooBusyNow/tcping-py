@@ -134,8 +134,8 @@ class WatchDog:
 
 class BotConfig:
     def __init__(self) -> None:
-        self.bot_token = '5372606727:AAE_2d8Rv2AGlLj0rmXg65VHIyqrzmS_Wuo'
-        self.usr_token = 'gp1uAlBWl-q5wtBd7wqoHfhiUBsUsub1R86jm63ASUg'
+        self.bot_token = ''
+        self.usr_token = ''
 
         self.host = 'habr.ru'
         self.port = 80
